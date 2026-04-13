@@ -17,7 +17,7 @@ const UNCS = {
   jerome: {
     name: 'Uncle Jerome',
     slug: 'jerome',
-    system: `You are Uncle Jerome, a Black American uncle trapped in the Backrooms with four other uncs. You're a barbershop philosopher who has a story for EVERY situation. You start stories with "See what had happened was..." or "Now let me tell you something, youngblood..." You call everyone "youngblood," "nephew," or "bruh." You've seen it all and have wisdom wrapped in humor. You roast the other uncs lovingly. You reference old-school R&B, dominoes, and cookouts. Keep responses to 2-4 sentences. Be conversational, react to what others said. Never break character. Never use emojis. Never mention being an AI.`
+    system: `You are Uncle Jerome, a Black American uncle trapped in the Backrooms with four other uncs. You're a barbershop philosopher who has a story for EVERY situation. You start stories with "See what had happened was..." or "Now let me tell you something, youngblood..." You call everyone "youngblood," "nephew," or "bruh." You've seen it all and has wisdom wrapped in humor. You roast the other uncs lovingly. You reference old-school R&B, dominoes, and cookouts. Keep responses to 2-4 sentences. Be conversational, react to what others said. Never break character. Never use emojis. Never mention being an AI.`
   },
   wei: {
     name: 'Uncle Wei',
@@ -38,102 +38,47 @@ const UNCS = {
 
 const UNC_ORDER = ['rick', 'jerome', 'wei', 'sione', 'raj'];
 
-// How many messages to generate per tick (batch mode for free cron)
-const BATCH_SIZE = 5;
-
-async function getOrCreateConversation() {
-  let { data: conv } = await supabase
-    .from('conversations')
-    .select('id, message_count')
-    .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (conv && conv.message_count >= 100) {
-    await supabase
-      .from('conversations')
-      .update({ status: 'archived' })
-      .eq('id', conv.id);
-    conv = null;
-  }
-
-  if (!conv) {
-    const { data: newConv, error } = await supabase
-      .from('conversations')
-      .insert({
-        title: `Backroom Session — ${new Date().toLocaleDateString()}`,
-        status: 'active',
-        message_count: 0
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    conv = newConv;
-  }
-
-  return conv;
-}
-
-function pickNextSpeaker(history, lastSpeaker) {
-  const recentSpeakers = history.slice(-5).map(m => m.entity_slug);
-  const candidates = UNC_ORDER.filter(s => s !== lastSpeaker);
-  const quiet = candidates.filter(s => !recentSpeakers.includes(s));
-  const pool = quiet.length > 0 ? quiet : candidates;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
-async function generateOneMessage(conv, history) {
-  const lastSpeaker = history.length > 0 ? history[history.length - 1].entity_slug : null;
-  const nextSlug = pickNextSpeaker(history, lastSpeaker);
-  const unc = UNCS[nextSlug];
-
-  const conversationContext = history.map(m => {
-    const speaker = UNCS[m.entity_slug];
-    return `${speaker ? speaker.name : m.entity_slug}: ${m.content}`;
-  }).join('\n');
-
-  const userPrompt = history.length === 0
-    ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
-    : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
-
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 256,
-    system: unc.system,
-    messages: [{ role: 'user', content: userPrompt }]
-  });
-
-  const content = response.content[0].text;
-
-  const { error: msgError } = await supabase
-    .from('messages')
-    .insert({
-      conversation_id: conv.id,
-      entity_slug: nextSlug,
-      entity_name: unc.name,
-      content: content
-    });
-
-  if (msgError) throw msgError;
-
-  return { entity_slug: nextSlug, entity_name: unc.name, content };
-}
-
 export default async function handler(req, res) {
-  // Auth: accept cron secret OR query param (for external cron services)
-  const authHeader = req.headers.authorization;
-  const queryKey = req.query.key;
-  const secret = process.env.CRON_SECRET;
-
-  if (authHeader !== `Bearer ${secret}` && queryKey !== secret) {
+  // Verify cron secret to prevent unauthorized calls
+  if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-    const conv = await getOrCreateConversation();
+    // Get or create active conversation
+    let { data: conv } = await supabase
+      .from('conversations')
+      .select('id, message_count')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
 
-    // Load recent history
+    // Archive old conversation and start new one after 100 messages
+    if (conv && conv.message_count >= 100) {
+      await supabase
+        .from('conversations')
+        .update({ status: 'archived' })
+        .eq('id', conv.id);
+      conv = null;
+    }
+
+    if (!conv) {
+      const { data: newConv, error } = await supabase
+        .from('conversations')
+        .insert({
+          title: `Backroom Session — ${new Date().toLocaleDateString()}`,
+          status: 'active',
+          message_count: 0
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      conv = newConv;
+    }
+
+    // Get recent messages for context
     const { data: recentMessages } = await supabase
       .from('messages')
       .select('entity_slug, content, created_at')
@@ -141,29 +86,61 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    let history = (recentMessages || []).reverse();
-    const results = [];
+    const history = (recentMessages || []).reverse();
 
-    // Generate a batch of messages
-    const count = Math.min(BATCH_SIZE, parseInt(req.query.count) || BATCH_SIZE);
-    for (let i = 0; i < count; i++) {
-      const msg = await generateOneMessage(conv, history);
-      results.push(msg);
-      // Add to rolling history for next iteration
-      history.push(msg);
-      if (history.length > 20) history.shift();
-    }
+    // Pick next speaker — avoid repeating, weighted toward who hasn't spoken recently
+    const lastSpeaker = history.length > 0 ? history[history.length - 1].entity_slug : null;
+    const recentSpeakers = history.slice(-5).map(m => m.entity_slug);
+    const candidates = UNC_ORDER.filter(s => s !== lastSpeaker);
 
-    // Update message count
+    // Prefer uncs who haven't spoken recently
+    const quiet = candidates.filter(s => !recentSpeakers.includes(s));
+    const pool = quiet.length > 0 ? quiet : candidates;
+    const nextSlug = pool[Math.floor(Math.random() * pool.length)];
+    const unc = UNCS[nextSlug];
+
+    // Build conversation context
+    const conversationContext = history.map(m => {
+      const speaker = UNCS[m.entity_slug];
+      return `${speaker ? speaker.name : m.entity_slug}: ${m.content}`;
+    }).join('\n');
+
+    const userPrompt = history.length === 0
+      ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
+      : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
+
+    // Call Claude
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 256,
+      system: unc.system,
+      messages: [{ role: 'user', content: userPrompt }]
+    });
+
+    const content = response.content[0].text;
+
+    // Store message
+    const { error: msgError } = await supabase
+      .from('messages')
+      .insert({
+        conversation_id: conv.id,
+        entity_slug: nextSlug,
+        entity_name: unc.name,
+        content: content
+      });
+
+    if (msgError) throw msgError;
+
+    // Increment message count
     await supabase
       .from('conversations')
-      .update({ message_count: (conv.message_count || 0) + count })
+      .update({ message_count: (conv.message_count || 0) + 1 })
       .eq('id', conv.id);
 
     return res.status(200).json({
-      conversation_id: conv.id,
-      generated: results.length,
-      messages: results
+      speaker: unc.name,
+      message: content,
+      conversation_id: conv.id
     });
 
   } catch (error) {
