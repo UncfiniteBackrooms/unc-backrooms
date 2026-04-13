@@ -38,47 +38,102 @@ const UNCS = {
 
 const UNC_ORDER = ['rick', 'jerome', 'wei', 'sione', 'raj'];
 
+// How many messages to generate per tick (batch mode for free cron)
+const BATCH_SIZE = 5;
+
+async function getOrCreateConversation() {
+  let { data: conv } = await supabase
+    .from('conversations')
+    .select('id, message_count')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (conv && conv.message_count >= 100) {
+    await supabase
+      .from('conversations')
+      .update({ status: 'archived' })
+      .eq('id', conv.id);
+    conv = null;
+  }
+
+  if (!conv) {
+    const { data: newConv, error } = await supabase
+      .from('conversations')
+      .insert({
+        title: `Backroom Session — ${new Date().toLocaleDateString()}`,
+        status: 'active',
+        message_count: 0
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    conv = newConv;
+  }
+
+  return conv;
+}
+
+function pickNextSpeaker(history, lastSpeaker) {
+  const recentSpeakers = history.slice(-5).map(m => m.entity_slug);
+  const candidates = UNC_ORDER.filter(s => s !== lastSpeaker);
+  const quiet = candidates.filter(s => !recentSpeakers.includes(s));
+  const pool = quiet.length > 0 ? quiet : candidates;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+async function generateOneMessage(conv, history) {
+  const lastSpeaker = history.length > 0 ? history[history.length - 1].entity_slug : null;
+  const nextSlug = pickNextSpeaker(history, lastSpeaker);
+  const unc = UNCS[nextSlug];
+
+  const conversationContext = history.map(m => {
+    const speaker = UNCS[m.entity_slug];
+    return `${speaker ? speaker.name : m.entity_slug}: ${m.content}`;
+  }).join('\n');
+
+  const userPrompt = history.length === 0
+    ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
+    : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 256,
+    system: unc.system,
+    messages: [{ role: 'user', content: userPrompt }]
+  });
+
+  const content = response.content[0].text;
+
+  const { error: msgError } = await supabase
+    .from('messages')
+    .insert({
+      conversation_id: conv.id,
+      entity_slug: nextSlug,
+      entity_name: unc.name,
+      content: content
+    });
+
+  if (msgError) throw msgError;
+
+  return { entity_slug: nextSlug, entity_name: unc.name, content };
+}
+
 export default async function handler(req, res) {
-  // Verify cron secret to prevent unauthorized calls
-  if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Auth: accept cron secret OR query param (for external cron services)
+  const authHeader = req.headers.authorization;
+  const queryKey = req.query.key;
+  const secret = process.env.CRON_SECRET;
+
+  if (authHeader !== `Bearer ${secret}` && queryKey !== secret) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-    // Get or create active conversation
-    let { data: conv } = await supabase
-      .from('conversations')
-      .select('id, message_count')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+    const conv = await getOrCreateConversation();
 
-    // Archive old conversation and start new one after 100 messages
-    if (conv && conv.message_count >= 100) {
-      await supabase
-        .from('conversations')
-        .update({ status: 'archived' })
-        .eq('id', conv.id);
-      conv = null;
-    }
-
-    if (!conv) {
-      const { data: newConv, error } = await supabase
-        .from('conversations')
-        .insert({
-          title: `Backroom Session — ${new Date().toLocaleDateString()}`,
-          status: 'active',
-          message_count: 0
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      conv = newConv;
-    }
-
-    // Get recent messages for context
+    // Load recent history
     const { data: recentMessages } = await supabase
       .from('messages')
       .select('entity_slug, content, created_at')
@@ -86,61 +141,29 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    const history = (recentMessages || []).reverse();
+    let history = (recentMessages || []).reverse();
+    const results = [];
 
-    // Pick next speaker — avoid repeating, weighted toward who hasn't spoken recently
-    const lastSpeaker = history.length > 0 ? history[history.length - 1].entity_slug : null;
-    const recentSpeakers = history.slice(-5).map(m => m.entity_slug);
-    const candidates = UNC_ORDER.filter(s => s !== lastSpeaker);
+    // Generate a batch of messages
+    const count = Math.min(BATCH_SIZE, parseInt(req.query.count) || BATCH_SIZE);
+    for (let i = 0; i < count; i++) {
+      const msg = await generateOneMessage(conv, history);
+      results.push(msg);
+      // Add to rolling history for next iteration
+      history.push(msg);
+      if (history.length > 20) history.shift();
+    }
 
-    // Prefer uncs who haven't spoken recently
-    const quiet = candidates.filter(s => !recentSpeakers.includes(s));
-    const pool = quiet.length > 0 ? quiet : candidates;
-    const nextSlug = pool[Math.floor(Math.random() * pool.length)];
-    const unc = UNCS[nextSlug];
-
-    // Build conversation context
-    const conversationContext = history.map(m => {
-      const speaker = UNCS[m.entity_slug];
-      return `${speaker ? speaker.name : m.entity_slug}: ${m.content}`;
-    }).join('\n');
-
-    const userPrompt = history.length === 0
-      ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
-      : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
-
-    // Call Claude
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
-      system: unc.system,
-      messages: [{ role: 'user', content: userPrompt }]
-    });
-
-    const content = response.content[0].text;
-
-    // Store message
-    const { error: msgError } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id: conv.id,
-        entity_slug: nextSlug,
-        entity_name: unc.name,
-        content: content
-      });
-
-    if (msgError) throw msgError;
-
-    // Increment message count
+    // Update message count
     await supabase
       .from('conversations')
-      .update({ message_count: (conv.message_count || 0) + 1 })
+      .update({ message_count: (conv.message_count || 0) + count })
       .eq('id', conv.id);
 
     return res.status(200).json({
-      speaker: unc.name,
-      message: content,
-      conversation_id: conv.id
+      conversation_id: conv.id,
+      generated: results.length,
+      messages: results
     });
 
   } catch (error) {
