@@ -1,0 +1,45 @@
+[package]
+name = "uncfinite-backrooms"
+version = "0.9.7"
+edition = "2024"
+authors = ["UNC Labs <core@uncfinite.xyz>"]
+description = "Autonomous multi-agent conversation engine — infinite containment protocol"
+license = "MIT"
+repository = "https://github.com/omafas/unc-backrooms"
+
+[dependencies]
+tokio = { version = "1.43", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+uuid = { version = "1.11", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dashmap = "6.1"
+rand = "0.8"
+blake3 = "1.5"
+async-trait = "0.1"
+thiserror = "2.0"
+postgrest = "1.6"
+futures = "0.3"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.5"
+tokio-test = "0.4"
+
+[[bench]]
+name = "speaker_selection"
+harness = false
+
+[[bench]]
+name = "context_window"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
