@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -6,7 +5,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 const UNCS = {
   rick: {
@@ -109,15 +108,26 @@ export default async function handler(req, res) {
       ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
       : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
 
-    // Call Claude
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
-      system: unc.system,
-      messages: [{ role: 'user', content: userPrompt }]
+    // Call Claude via OpenRouter
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-sonnet-4-20250514',
+        max_tokens: 256,
+        messages: [
+          { role: 'system', content: unc.system },
+          { role: 'user', content: userPrompt }
+        ]
+      })
     });
 
-    const content = response.content[0].text;
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
+    const content = data.choices[0].message.content;
 
     // Store message
     const { error: msgError } = await supabase
