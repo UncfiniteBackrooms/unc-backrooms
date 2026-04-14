@@ -37,8 +37,20 @@ const UNCS = {
 
 const UNC_ORDER = ['rick', 'jerome', 'wei', 'sione', 'raj'];
 
+function pickNextSpeaker(history) {
+  const lastSpeaker = history.length > 0 ? history[history.length - 1].entity_slug : null;
+  const recentSpeakers = history.slice(-5).map(m => m.entity_slug);
+  const candidates = UNC_ORDER.filter(s => s !== lastSpeaker);
+  const quiet = candidates.filter(s => !recentSpeakers.includes(s));
+  const pool = quiet.length > 0 ? quiet : candidates;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export default async function handler(req, res) {
-  // Verify cron secret — check both Authorization header and query param
   const secret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
   const queryKey = req.query.key;
@@ -58,7 +70,6 @@ export default async function handler(req, res) {
       .limit(1)
       .single();
 
-    // Archive old conversation and start new one after 100 messages
     if (conv && conv.message_count >= 100) {
       await supabase
         .from('conversations')
@@ -77,12 +88,11 @@ export default async function handler(req, res) {
         })
         .select()
         .single();
-
       if (error) throw error;
       conv = newConv;
     }
 
-    // Get recent messages for context
+    // Load recent history
     const { data: recentMessages } = await supabase
       .from('messages')
       .select('entity_slug, content, created_at')
@@ -90,72 +100,74 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    const history = (recentMessages || []).reverse();
+    let history = (recentMessages || []).reverse();
+    const results = [];
+    const BATCH = 8;
 
-    // Pick next speaker — avoid repeating, weighted toward who hasn't spoken recently
-    const lastSpeaker = history.length > 0 ? history[history.length - 1].entity_slug : null;
-    const recentSpeakers = history.slice(-5).map(m => m.entity_slug);
-    const candidates = UNC_ORDER.filter(s => s !== lastSpeaker);
+    // Generate 8 messages, inserting each one with a staggered delay
+    for (let i = 0; i < BATCH; i++) {
+      const nextSlug = pickNextSpeaker(history);
+      const unc = UNCS[nextSlug];
 
-    // Prefer uncs who haven't spoken recently
-    const quiet = candidates.filter(s => !recentSpeakers.includes(s));
-    const pool = quiet.length > 0 ? quiet : candidates;
-    const nextSlug = pool[Math.floor(Math.random() * pool.length)];
-    const unc = UNCS[nextSlug];
+      const conversationContext = history.map(m => {
+        const speaker = UNCS[m.entity_slug];
+        return `${speaker ? speaker.name : m.entity_slug}: ${m.content}`;
+      }).join('\n');
 
-    // Build conversation context
-    const conversationContext = history.map(m => {
-      const speaker = UNCS[m.entity_slug];
-      return `${speaker ? speaker.name : m.entity_slug}: ${m.content}`;
-    }).join('\n');
+      const userPrompt = history.length === 0
+        ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
+        : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
 
-    const userPrompt = history.length === 0
-      ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
-      : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
-
-    // Call Claude via OpenRouter
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4.6',
-        max_tokens: 256,
-        messages: [
-          { role: 'system', content: unc.system },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
-    const content = data.choices[0].message.content;
-
-    // Store message
-    const { error: msgError } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id: conv.id,
-        entity_slug: nextSlug,
-        entity_name: unc.name,
-        content: content
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'anthropic/claude-sonnet-4.6',
+          max_tokens: 256,
+          messages: [
+            { role: 'system', content: unc.system },
+            { role: 'user', content: userPrompt }
+          ]
+        })
       });
 
-    if (msgError) throw msgError;
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
+      const content = data.choices[0].message.content;
 
-    // Increment message count
+      // Insert into DB — Supabase Realtime pushes it to viewers instantly
+      await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conv.id,
+          entity_slug: nextSlug,
+          entity_name: unc.name,
+          content: content
+        });
+
+      history.push({ entity_slug: nextSlug, content });
+      if (history.length > 20) history.shift();
+      results.push({ speaker: unc.name, message: content });
+
+      // Random delay 3-8 seconds between messages to simulate real convo
+      if (i < BATCH - 1) {
+        await sleep(3000 + Math.floor(Math.random() * 5000));
+      }
+    }
+
+    // Update message count
     await supabase
       .from('conversations')
-      .update({ message_count: (conv.message_count || 0) + 1 })
+      .update({ message_count: (conv.message_count || 0) + BATCH })
       .eq('id', conv.id);
 
     return res.status(200).json({
-      speaker: unc.name,
-      message: content,
-      conversation_id: conv.id
+      conversation_id: conv.id,
+      generated: results.length,
+      messages: results
     });
 
   } catch (error) {
