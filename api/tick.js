@@ -38,8 +38,13 @@ const UNCS = {
 const UNC_ORDER = ['rick', 'jerome', 'wei', 'sione', 'raj'];
 
 export default async function handler(req, res) {
-  // Verify cron secret to prevent unauthorized calls
-  if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Verify cron secret — check both Authorization header and query param
+  const secret = process.env.CRON_SECRET;
+  const authHeader = req.headers.authorization;
+  const queryKey = req.query.key;
+  const isAuthorized = authHeader === `Bearer ${secret}` || queryKey === secret;
+
+  if (!isAuthorized) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
