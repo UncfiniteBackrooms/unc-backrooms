@@ -121,7 +121,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-3.5-sonnet',
+        model: 'anthropic/claude-sonnet-4.6',
         max_tokens: 256,
         messages: [
           { role: 'system', content: unc.system },
