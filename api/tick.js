@@ -6,6 +6,7 @@ const supabase = createClient(
 );
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const ARCHIVE_AFTER_MINUTES = 15;
 
 const UNCS = {
   rick: {
@@ -50,6 +51,61 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function callAI(systemPrompt, userPrompt, maxTokens = 256) {
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'anthropic/claude-sonnet-4.6',
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
+  return data.choices[0].message.content;
+}
+
+async function generateConversationTitle(messages) {
+  const summary = messages.map(m => `${m.entity_name || m.entity_slug}: ${m.content}`).join('\n');
+  const title = await callAI(
+    'You generate short, punchy conversation titles. Max 8 words. No quotes. Be witty and specific to what was discussed. Examples: "The Great BBQ Sauce Debate", "Why Nobody Saves Money Anymore", "Cricket vs Football: Round 47"',
+    `Summarize this conversation in a short title:\n\n${summary}`,
+    30
+  );
+  return title.replace(/"/g, '').trim();
+}
+
+async function archiveConversation(conv) {
+  // Get all messages for title generation
+  const { data: allMessages } = await supabase
+    .from('messages')
+    .select('entity_slug, entity_name, content')
+    .eq('conversation_id', conv.id)
+    .order('created_at', { ascending: true })
+    .limit(30);
+
+  let title = `Backroom Session — ${new Date().toLocaleDateString()}`;
+  if (allMessages && allMessages.length > 0) {
+    try {
+      title = await generateConversationTitle(allMessages);
+    } catch (e) {
+      console.error('Title generation failed:', e);
+    }
+  }
+
+  await supabase
+    .from('conversations')
+    .update({ status: 'archived', title })
+    .eq('id', conv.id);
+}
+
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
@@ -64,25 +120,26 @@ export default async function handler(req, res) {
     // Get or create active conversation
     let { data: conv } = await supabase
       .from('conversations')
-      .select('id, message_count')
+      .select('id, message_count, created_at')
       .eq('status', 'active')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
 
-    if (conv && conv.message_count >= 100) {
-      await supabase
-        .from('conversations')
-        .update({ status: 'archived' })
-        .eq('id', conv.id);
-      conv = null;
+    // Archive after 15 minutes
+    if (conv) {
+      const ageMinutes = (Date.now() - new Date(conv.created_at).getTime()) / 60000;
+      if (ageMinutes >= ARCHIVE_AFTER_MINUTES) {
+        await archiveConversation(conv);
+        conv = null;
+      }
     }
 
     if (!conv) {
       const { data: newConv, error } = await supabase
         .from('conversations')
         .insert({
-          title: `Backroom Session — ${new Date().toLocaleDateString()}`,
+          title: `Session starting...`,
           status: 'active',
           message_count: 0
         })
@@ -104,7 +161,6 @@ export default async function handler(req, res) {
     const results = [];
     const BATCH = 8;
 
-    // Generate 8 messages, inserting each one with a staggered delay
     for (let i = 0; i < BATCH; i++) {
       const nextSlug = pickNextSpeaker(history);
       const unc = UNCS[nextSlug];
@@ -118,27 +174,8 @@ export default async function handler(req, res) {
         ? 'You just woke up in the Backrooms with four other uncs. You don\'t know how you got here. Start talking.'
         : `Here is the recent conversation:\n\n${conversationContext}\n\nRespond naturally as ${unc.name}. React to what was just said. Keep the conversation going.`;
 
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'anthropic/claude-sonnet-4.6',
-          max_tokens: 256,
-          messages: [
-            { role: 'system', content: unc.system },
-            { role: 'user', content: userPrompt }
-          ]
-        })
-      });
+      const content = await callAI(unc.system, userPrompt);
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
-      const content = data.choices[0].message.content;
-
-      // Insert into DB — Supabase Realtime pushes it to viewers instantly
       await supabase
         .from('messages')
         .insert({
@@ -152,13 +189,11 @@ export default async function handler(req, res) {
       if (history.length > 20) history.shift();
       results.push({ speaker: unc.name, message: content });
 
-      // Random delay 3-8 seconds between messages to simulate real convo
       if (i < BATCH - 1) {
         await sleep(3000 + Math.floor(Math.random() * 5000));
       }
     }
 
-    // Update message count
     await supabase
       .from('conversations')
       .update({ message_count: (conv.message_count || 0) + BATCH })
