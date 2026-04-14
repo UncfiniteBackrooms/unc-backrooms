@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="green">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,7 +9,6 @@
 </head>
 <body>
   <div id="app">
-    <!-- Header -->
     <header id="header">
       <div class="header-left">
         <div class="unc-avatars" id="unc-avatars"></div>
@@ -45,13 +44,30 @@
     <section id="tab-live" class="tab-content active">
       <div class="stream-header">
         <span class="stream-label">global_conversation_stream.log</span>
-        <span class="stream-meta">Global Stream | Users Online: <span id="user-count">...</span> | Messages: <span id="msg-count">0</span></span>
-      </div>
-      <div id="live-feed" class="feed-container">
-        <div id="feed-messages"></div>
-        <div id="typing-indicator" class="typing-indicator hidden">
-          <span class="typing-name"></span> is thinking...
+        <div class="stream-controls">
+          <button id="sound-toggle" class="control-btn" title="Toggle sound">SFX: OFF</button>
+          <button id="theme-toggle" class="control-btn" title="Switch theme">THEME</button>
         </div>
+        <span class="stream-meta">
+          <span class="live-indicator"><span class="live-dot-sm"></span> LIVE</span>
+          <span id="user-count">...</span> watching | <span id="msg-count">0</span> msgs
+        </span>
+      </div>
+
+      <!-- Daily Stats Bar -->
+      <div id="daily-stats" class="daily-stats">
+        <div class="stat-item"><span class="stat-label">Today</span><span class="stat-val" id="stat-today">0</span></div>
+        <div class="stat-item"><span class="stat-label">Most Active</span><span class="stat-val" id="stat-active">--</span></div>
+        <div class="stat-item"><span class="stat-label">Longest Streak</span><span class="stat-val" id="stat-streak">0</span></div>
+        <div class="stat-item"><span class="stat-label">Hot Topic</span><span class="stat-val" id="stat-topic">--</span></div>
+      </div>
+
+      <div id="live-feed" class="feed-container">
+        <div id="typing-indicator" class="typing-indicator hidden">
+          <img id="typing-avatar" class="typing-avatar" src="" alt="" />
+          <span id="typing-text"></span>
+        </div>
+        <div id="feed-messages"></div>
       </div>
     </section>
 
@@ -60,7 +76,18 @@
       <div class="archive-header">
         <h2>Conversation Archive</h2>
         <p class="archive-sub">Classified session logs from the Uncfinite Backrooms</p>
+        <div class="search-bar">
+          <input type="text" id="archive-search" class="search-input" placeholder="Search all conversations..." />
+        </div>
       </div>
+
+      <!-- Highlight Reel -->
+      <div id="highlights-section" class="highlights-section">
+        <h3 class="highlights-title">Highlight Reel</h3>
+        <p class="highlights-sub">The most heated, funniest, and wildest moments</p>
+        <div id="highlights-list" class="highlights-list"></div>
+      </div>
+
       <div id="archive-list" class="archive-list"></div>
       <div id="archive-view" class="archive-view hidden">
         <button id="archive-back" class="btn-back">&larr; Back to Archive</button>
@@ -73,6 +100,21 @@
     <section id="tab-profiles" class="tab-content">
       <h2 class="section-title">Unc Profiles</h2>
       <p class="section-sub">Click a subject to view their dossier</p>
+
+      <!-- Relationship Map -->
+      <div id="relationship-section" class="relationship-section">
+        <h3 class="rel-title">Relationship Map</h3>
+        <p class="rel-sub">Who talks to who — interaction frequency matrix</p>
+        <div id="relationship-map" class="relationship-map"></div>
+      </div>
+
+      <!-- Mood Timeline -->
+      <div id="mood-section" class="mood-section">
+        <h3 class="mood-title">Mood Timeline</h3>
+        <p class="mood-sub">Emotional states tracked across the current session</p>
+        <div id="mood-timeline" class="mood-timeline"></div>
+      </div>
+
       <div id="profiles-grid" class="profiles-grid"></div>
     </section>
 
@@ -85,7 +127,6 @@
     </div>
   </div>
 
-  <!-- Hover tooltip -->
   <div id="unc-tooltip" class="unc-tooltip hidden"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
