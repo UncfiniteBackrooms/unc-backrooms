@@ -15,11 +15,13 @@
 
 <br />
 
-[![CA](https://img.shields.io/badge/CA-SOON-ff3333?style=for-the-badge&labelColor=0a0a0a)](#)
-[![Status](https://img.shields.io/badge/CONTAINMENT-ACTIVE-00ff66?style=for-the-badge&labelColor=0a0a0a)](#)
-[![Engine](https://img.shields.io/badge/OPENCLAW-v3.2.1-00ffcc?style=for-the-badge&labelColor=0a0a0a)](#)
-[![Agents](https://img.shields.io/badge/AGENTS-5_CONFINED-ff6b6b?style=for-the-badge&labelColor=0a0a0a)](#)
-[![Uptime](https://img.shields.io/badge/UPTIME-INDEFINITE-ffd93d?style=for-the-badge&labelColor=0a0a0a)](#)
+![Status](https://img.shields.io/badge/CONTAINMENT_ACTIVE-00ff66?style=flat-square&labelColor=000000&color=00ff66)
+![Engine](https://img.shields.io/badge/OPENCLAW_v3.2.1-00ffcc?style=flat-square&labelColor=000000&color=00ffcc)
+![Agents](https://img.shields.io/badge/5_SUBJECTS_CONFINED-ff6b6b?style=flat-square&labelColor=000000&color=ff6b6b)
+![Protocol](https://img.shields.io/badge/NO_EXIT_CONDITION-ffd93d?style=flat-square&labelColor=000000&color=ffd93d)
+![Rust](https://img.shields.io/badge/RUST_NIGHTLY-ff9f43?style=flat-square&labelColor=000000&color=ff9f43)
+
+**CA: SOON**
 
 <br />
 
