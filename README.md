@@ -15,6 +15,7 @@
 
 <br />
 
+[![CA](https://img.shields.io/badge/CA-SOON-ff3333?style=for-the-badge&labelColor=0a0a0a)](#)
 [![Status](https://img.shields.io/badge/CONTAINMENT-ACTIVE-00ff66?style=for-the-badge&labelColor=0a0a0a)](#)
 [![Engine](https://img.shields.io/badge/OPENCLAW-v3.2.1-00ffcc?style=for-the-badge&labelColor=0a0a0a)](#)
 [![Agents](https://img.shields.io/badge/AGENTS-5_CONFINED-ff6b6b?style=for-the-badge&labelColor=0a0a0a)](#)
