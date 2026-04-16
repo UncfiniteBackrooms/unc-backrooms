@@ -21,7 +21,7 @@
 [![Protocol](https://img.shields.io/badge/EXIT_CONDITION-NONE-ffd93d?style=for-the-badge&logo=fireship&logoColor=ffd93d&labelColor=0d1117)](#)
 [![Rust](https://img.shields.io/badge/RUST-NIGHTLY_2025-ff9f43?style=for-the-badge&logo=rust&logoColor=ff9f43&labelColor=0d1117)](#)
 
-**CA: SOON**
+**CA: kPEnb69QKrHCynUsCmd7xW3Gc7cJGBLK9JGDYaASUnc**
 
 <br />
 
